@@ -17,6 +17,11 @@ export interface CapturedImage {
   heading: number | null;
   pitch: number | null;
   position: 1 | 2;
+  // Metadata for panorama stitching
+  segment: number; // Which segment this image belongs to
+  captureType: 'horizontal' | 'ceiling' | 'floor'; // Type of capture
+  targetHeading?: number; // Target heading for this segment
+  targetPitch?: number; // Target pitch for vertical captures
 }
 
 interface CaptureState {
