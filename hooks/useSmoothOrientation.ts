@@ -83,11 +83,12 @@ export function useSmoothOrientation() {
             // Update with rate info
             if (data.rotation) {
               const rawHeading = normalizeHeading(toDegrees(data.rotation.alpha));
-              const rawPitch = toDegrees(data.rotation.beta);
+              const rawBeta = toDegrees(data.rotation.beta);
+              const photospherePitch = rawBeta !== null ? rawBeta - 90 : null;
               const rawRoll = toDegrees(data.rotation.gamma);
 
               smoothHeadingRef.current = smoothAngle(smoothHeadingRef.current, rawHeading, HEADING_ALPHA);
-              smoothPitchRef.current = smooth(smoothPitchRef.current, rawPitch, PITCH_ALPHA);
+              smoothPitchRef.current = smooth(smoothPitchRef.current, photospherePitch, PITCH_ALPHA);
               smoothRollRef.current = smooth(smoothRollRef.current, rawRoll, ROLL_ALPHA);
 
               setOrientation({
@@ -100,17 +101,25 @@ export function useSmoothOrientation() {
           } else {
             // Normal update (no rate calculation)
             if (data.rotation) {
+              // Convert beta to photosphere pitch:
+              // DeviceMotion beta: 0° (flat) -> 90° (upright portrait) -> 180° (flat upside down)
+              // Photosphere pitch: -90° (floor) -> 0° (straight ahead) -> +90° (ceiling)
+              const rawBeta = toDegrees(data.rotation.beta);
+              const photospherePitch = rawBeta !== null ? rawBeta - 90 : null;
+
+              const smoothedPitch = smooth(
+                smoothPitchRef.current,
+                photospherePitch,
+                PITCH_ALPHA
+              );
+
               setOrientation(prev => ({
                 heading: smoothAngle(
                   smoothHeadingRef.current,
                   normalizeHeading(toDegrees(data.rotation.alpha)),
                   HEADING_ALPHA
                 ),
-                pitch: smooth(
-                  smoothPitchRef.current,
-                  toDegrees(data.rotation.beta),
-                  PITCH_ALPHA
-                ),
+                pitch: smoothedPitch,
                 roll: smooth(
                   smoothRollRef.current,
                   toDegrees(data.rotation.gamma),
@@ -120,15 +129,9 @@ export function useSmoothOrientation() {
               }));
 
               // Persist smoothed refs to keep continuity
-              const updated = {
-                heading: smoothHeadingRef.current,
-                pitch: smoothPitchRef.current,
-                roll: smoothRollRef.current,
-              };
-
-              smoothHeadingRef.current = updated.heading ?? smoothHeadingRef.current;
-              smoothPitchRef.current = updated.pitch ?? smoothPitchRef.current;
-              smoothRollRef.current = updated.roll ?? smoothRollRef.current;
+              smoothHeadingRef.current = smoothHeadingRef.current;
+              smoothPitchRef.current = smoothedPitch;
+              smoothRollRef.current = smoothRollRef.current;
             }
           }
         });

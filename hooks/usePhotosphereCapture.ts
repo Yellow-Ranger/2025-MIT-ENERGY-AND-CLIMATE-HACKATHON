@@ -1,22 +1,61 @@
 import { useState, useRef } from 'react';
 import type { CaptureStep, CapturedImage, CaptureMode } from '../types/photosphere';
-import { calculateTargetHeading } from '../utils/photosphere/orientationMath';
 
+// Free-form spherical photosphere capture
+// No segments - images can be captured in any order and orientation
 export function usePhotosphereCapture() {
   const [step, setStep] = useState<CaptureStep>('initial-alignment');
-  const [horizontalSegments, setHorizontalSegments] = useState<Set<number>>(new Set());
-  const [ceilingSegments, setCeilingSegments] = useState<Set<number>>(new Set());
-  const [floorSegments, setFloorSegments] = useState<Set<number>>(new Set());
   const [images, setImages] = useState<CapturedImage[]>([]);
-
+  const captureCountRef = useRef(0);
   const initialHeadingRef = useRef<number | null>(null);
+
+  // Minimum images for rough coverage (can be adjusted)
+  const MIN_IMAGES = 40;
 
   const startCapture = (currentHeading: number) => {
     initialHeadingRef.current = currentHeading;
-    setStep('capturing-horizontal');
-    console.log('[usePhotosphereCapture] Starting capture at heading:', currentHeading);
+    setStep('capturing-horizontal'); // Keep same step name for compatibility
+    console.log('[usePhotosphereCapture] Starting free-form spherical capture');
   };
 
+  const captureImage = (
+    heading: number,
+    pitch: number,
+    photoUri: string,
+    captureType: CaptureMode = 'horizontal'
+  ) => {
+    captureCountRef.current += 1;
+    const count = captureCountRef.current;
+
+    const newImage: CapturedImage = {
+      blob: photoUri,
+      timestamp: Date.now(),
+      heading,
+      pitch,
+      segment: count, // Use count as unique ID instead of segment number
+      captureType,
+      targetHeading: undefined, // No target in free-form mode
+      position: 1,
+    };
+
+    console.log('[usePhotosphereCapture] Captured image:', {
+      count,
+      heading: heading.toFixed(1),
+      pitch: pitch.toFixed(1),
+      captureType,
+      uri: photoUri,
+    });
+
+    setImages(prev => [...prev, newImage]);
+
+    // Auto-complete when minimum images reached
+    if (count >= MIN_IMAGES) {
+      console.log('[usePhotosphereCapture] Minimum images reached, completing capture');
+      setStep('completion');
+    }
+  };
+
+  // Legacy method for compatibility with existing code
   const captureSegment = (
     segment: number,
     heading: number,
@@ -24,110 +63,61 @@ export function usePhotosphereCapture() {
     photoUri: string,
     captureType: CaptureMode
   ) => {
-    const targetHeading = captureType === 'horizontal'
-      ? calculateTargetHeading(segment, initialHeadingRef.current!, 24)
-      : undefined;
+    // Just forward to captureImage, ignoring segment parameter
+    captureImage(heading, pitch, photoUri, captureType);
+  };
 
-    const newImage: CapturedImage = {
-      blob: photoUri,
-      timestamp: Date.now(),
-      heading,
-      pitch,
-      segment,
-      captureType,
-      targetHeading,
-      position: 1,
-    };
-
-    console.log('[usePhotosphereCapture] Adding image:', {
-      segment,
-      captureType,
-      targetHeading,
-      uri: photoUri,
-      hasFileScheme: photoUri.startsWith('file://'),
-    });
-
-    setImages(prev => [...prev, newImage]);
-
-    if (captureType === 'horizontal') {
-      const newSegments = new Set([...horizontalSegments, segment]);
-      setHorizontalSegments(newSegments);
-
-      console.log(`[usePhotosphereCapture] Captured horizontal segment ${segment}/24`);
-
-      // Auto-advance to ceiling prompt when horizontal complete
-      if (newSegments.size >= 24) {
-        console.log('[usePhotosphereCapture] Horizontal capture complete, showing ceiling prompt');
-        setStep('ceiling-prompt');
-      }
-    } else if (captureType === 'ceiling') {
-      const newSegments = new Set([...ceilingSegments, segment]);
-      setCeilingSegments(newSegments);
-
-      console.log(`[usePhotosphereCapture] Captured ceiling segment ${segment}/8`);
-
-      // Auto-advance to floor prompt when ceiling complete
-      if (newSegments.size >= 8) {
-        console.log('[usePhotosphereCapture] Ceiling capture complete, showing floor prompt');
-        setStep('floor-prompt');
-      }
-    } else if (captureType === 'floor') {
-      const newSegments = new Set([...floorSegments, segment]);
-      setFloorSegments(newSegments);
-
-      console.log(`[usePhotosphereCapture] Captured floor segment ${segment}/8`);
-
-      // Auto-advance to completion when floor complete
-      if (newSegments.size >= 8) {
-        console.log('[usePhotosphereCapture] Floor capture complete, photosphere finished');
-        setStep('completion');
-      }
-    }
+  const completeCapture = () => {
+    console.log('[usePhotosphereCapture] Manual completion with', images.length, 'images');
+    setStep('completion');
   };
 
   const skipCeiling = () => {
-    console.log('[usePhotosphereCapture] Skipping ceiling capture');
-    setStep('floor-prompt');
+    // In free-form mode, just complete
+    console.log('[usePhotosphereCapture] Completing capture (ceiling skipped)');
+    setStep('completion');
   };
 
   const skipFloor = () => {
-    console.log('[usePhotosphereCapture] Skipping floor capture');
+    console.log('[usePhotosphereCapture] Completing capture (floor skipped)');
     setStep('completion');
   };
 
   const startCeiling = () => {
-    console.log('[usePhotosphereCapture] Starting ceiling capture');
+    console.log('[usePhotosphereCapture] Continuing free-form capture (ceiling mode)');
     setStep('capturing-ceiling');
   };
 
   const startFloor = () => {
-    console.log('[usePhotosphereCapture] Starting floor capture');
+    console.log('[usePhotosphereCapture] Continuing free-form capture (floor mode)');
     setStep('capturing-floor');
   };
 
   const reset = () => {
     console.log('[usePhotosphereCapture] Resetting capture state');
     setStep('initial-alignment');
-    setHorizontalSegments(new Set());
-    setCeilingSegments(new Set());
-    setFloorSegments(new Set());
     setImages([]);
+    captureCountRef.current = 0;
     initialHeadingRef.current = null;
   };
 
   return {
     step,
-    horizontalSegments,
-    ceilingSegments,
-    floorSegments,
     images,
+    imageCount: captureCountRef.current,
     initialHeading: initialHeadingRef.current,
     startCapture,
-    captureSegment,
+    captureImage,
+    captureSegment, // Keep for backward compatibility
+    completeCapture,
     skipCeiling,
     skipFloor,
     startCeiling,
     startFloor,
     reset,
+    // Legacy exports for compatibility (empty sets)
+    horizontalSegments: new Set<number>(),
+    ceilingSegments: new Set<number>(),
+    floorSegments: new Set<number>(),
   };
 }

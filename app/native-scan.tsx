@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useRouter } from 'expo-router';
@@ -7,19 +7,12 @@ import { Paths, Directory, File } from 'expo-file-system';
 // Hooks
 import { useSmoothOrientation } from '../hooks/useSmoothOrientation';
 import { usePhotosphereCapture } from '../hooks/usePhotosphereCapture';
-import { useAutoCapture } from '../hooks/useAutoCapture';
 
 // Components
-import { ActiveDot } from '../components/photosphere/ActiveDot';
 import { CaptureFrame } from '../components/photosphere/CaptureFrame';
 import { PanoramaOverlay } from '../components/photosphere/PanoramaOverlay';
-import { ProgressIndicator } from '../components/photosphere/ProgressIndicator';
-import { ActionBar } from '../components/photosphere/ActionBar';
-import { CaptureMarkers } from '../components/photosphere/CaptureMarkers';
 
 // Utils
-import { calculateDotPosition } from '../utils/photosphere/dotPositioning';
-import { firstMissingSegment, calculateTargetHeading } from '../utils/photosphere/orientationMath';
 import { savePanoramaMetadata } from '../utils/panoramaMetadata';
 
 export default function NativeScan() {
@@ -32,28 +25,10 @@ export default function NativeScan() {
   const orientation = useSmoothOrientation();
   const capture = usePhotosphereCapture();
 
-  // Determine current capture mode
-  const currentMode: 'horizontal' | 'ceiling' | 'floor' =
-    capture.step === 'capturing-horizontal' ? 'horizontal' :
-    capture.step === 'capturing-ceiling' ? 'ceiling' : 'floor';
-
-  const segmentCount = currentMode === 'horizontal' ? 24 : 8;
-
-  // Find next segment to capture
-  const nextSegment =
-    currentMode === 'horizontal' ? firstMissingSegment(capture.horizontalSegments, 24) :
-    currentMode === 'ceiling' ? firstMissingSegment(capture.ceilingSegments, 8) :
-    firstMissingSegment(capture.floorSegments, 8);
-
-  // Calculate target heading for next segment
-  const targetHeading = nextSegment !== null && capture.initialHeading !== null
-    ? calculateTargetHeading(nextSegment, capture.initialHeading, segmentCount)
-    : 0;
-
-  // Handle auto-capture
-  const handleAutoCapture = async () => {
-    // Prevent concurrent captures
-    if (isCapturingRef.current || !cameraRef.current || nextSegment === null) return;
+  // Manual capture handler
+  const handleManualCapture = async () => {
+    if (isCapturingRef.current || !cameraRef.current) return;
+    if (orientation.heading === null || orientation.pitch === null) return;
 
     isCapturingRef.current = true;
 
@@ -63,31 +38,27 @@ export default function NativeScan() {
         skipProcessing: true,
       });
 
-      // Save to file system using new expo-file-system API
+      // Save to file system
       const timestamp = Date.now();
-      const filename = `scan_${timestamp}_${nextSegment}.jpg`;
+      const filename = `scan_${timestamp}.jpg`;
 
-      // Create scans directory (check if exists first)
       const scansDir = new Directory(Paths.document, 'scans');
       if (!scansDir.exists) {
         scansDir.create();
       }
 
-      // Create file reference
       const targetFile = new File(scansDir, filename);
-
-      // Copy photo to target location
       const sourceFile = new File(photo.uri);
       sourceFile.copy(targetFile);
 
       const path = targetFile.uri;
 
-      capture.captureSegment(
-        nextSegment,
-        orientation.heading!,
-        orientation.pitch!,
+      // Capture with current orientation
+      capture.captureImage(
+        orientation.heading,
+        orientation.pitch,
         path,
-        currentMode
+        'horizontal' // Default mode
       );
     } catch (err) {
       console.error('Capture failed:', err);
@@ -96,36 +67,43 @@ export default function NativeScan() {
     }
   };
 
-  // Auto-capture alignment detection (only during active capture, not initial alignment)
-  const shouldAutoCapture =
-    capture.step === 'capturing-horizontal' ||
-    capture.step === 'capturing-ceiling' ||
-    capture.step === 'capturing-floor';
-
-  const alignment = useAutoCapture(
-    shouldAutoCapture ? orientation.heading : null,
-    targetHeading,
-    handleAutoCapture
-  );
-
-  // Calculate dot position for horizontal capture
-  const dotPosition =
-    capture.step === 'capturing-horizontal' &&
-    orientation.heading !== null &&
-    capture.initialHeading !== null &&
-    nextSegment !== null
-      ? calculateDotPosition(orientation.heading, targetHeading)
-      : null;
-
-  const showMarkers =
-    capture.step === 'capturing-horizontal' &&
-    orientation.heading !== null;
-
   // Save and exit on completion
   useEffect(() => {
     if (capture.step === 'completion') {
       const saveAndExit = async () => {
-        await savePanoramaMetadata(capture.images);
+        // Generate unique scan ID
+        const scanId = `scan_${Date.now()}`;
+
+        // Create metadata from captured images
+        const metadata = {
+          version: '1.0.0',
+          captureDate: new Date().toISOString(),
+          totalImages: capture.images.length,
+          positions: Math.max(...capture.images.map(img => img.position)),
+          horizontalSegments: 24,
+          verticalSegments: 8,
+          images: capture.images.map(img => ({
+            filePath: img.blob,
+            timestamp: img.timestamp,
+            position: img.position,
+            segment: img.segment,
+            captureType: img.captureType,
+            heading: img.heading,
+            pitch: img.pitch,
+            targetHeading: img.targetHeading,
+            targetPitch: img.targetPitch,
+            spherical: {
+              azimuth: img.targetHeading ?? img.heading ?? 0,
+              elevation: img.captureType === 'ceiling'
+                ? (img.targetPitch ?? 52.5)
+                : img.captureType === 'floor'
+                ? (img.targetPitch ?? -52.5)
+                : (img.pitch ?? 0),
+            },
+          })),
+        };
+
+        await savePanoramaMetadata(scanId, metadata);
         setTimeout(() => router.push('/gallery'), 1500);
       };
       saveAndExit();
@@ -139,95 +117,83 @@ export default function NativeScan() {
         return (
           <>
             <CaptureFrame />
-            <ActiveDot position={{ x: 0, y: 0, distance: 0, scale: 1, color: 'white', opacity: 1 }} />
             <View style={styles.topBar}>
-              <Text style={styles.instructionTitle}>To start, keep dot inside circle</Text>
-              <Text style={styles.instructionSubtitle}>Hold steady, then tap confirm</Text>
+              <Text style={styles.instructionTitle}>Position camera for first image</Text>
+              <Text style={styles.instructionSubtitle}>Tap confirm to begin free-form capture</Text>
             </View>
             <View style={styles.bottomBar}>
-              <ActionBar
-                onConfirm={() => capture.startCapture(orientation.heading!)}
-                onCancel={() => router.back()}
-                showConfirm={orientation.heading !== null}
-              />
+              <TouchableOpacity
+                style={styles.button}
+                onPress={() => router.back()}
+              >
+                <Text style={styles.buttonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.button, styles.primaryButton]}
+                onPress={() => capture.startCapture(orientation.heading || 0)}
+                disabled={orientation.heading === null}
+              >
+                <Text style={styles.buttonText}>Start</Text>
+              </TouchableOpacity>
             </View>
           </>
         );
 
       case 'capturing-horizontal':
+      case 'capturing-ceiling':
+      case 'capturing-floor':
         return (
           <>
-            <PanoramaOverlay images={capture.images} currentHeading={orientation.heading} />
             <CaptureFrame />
-            {showMarkers && (
-              <CaptureMarkers
-                currentHeading={orientation.heading}
-                targetHeading={targetHeading}
-              />
-            )}
-            {dotPosition ? (
-              <ActiveDot position={dotPosition} />
-            ) : (
-              // Fallback: show centered dot if position not calculated yet
-              <ActiveDot position={{ x: 0, y: 0, distance: 0, scale: 1, color: 'white', opacity: 1 }} />
-            )}
+            <PanoramaOverlay
+              images={capture.images}
+              currentHeading={orientation.heading}
+              currentPitch={orientation.pitch}
+            />
+
             <View style={styles.topBar}>
-              <ProgressIndicator
-                current={capture.horizontalSegments.size}
-                total={24}
-                title="Rotate slowly"
-                subtitle="Follow the blue dot"
-              />
+              <Text style={styles.instructionTitle}>Free-form Photosphere Capture</Text>
+              <Text style={styles.instructionSubtitle}>
+                {capture.images.length} / 40 images captured
+              </Text>
+              <Text style={styles.orientationInfo}>
+                Heading: {orientation.heading?.toFixed(0) ?? '—'}° |
+                Pitch: {orientation.pitch?.toFixed(0) ?? '—'}°
+              </Text>
             </View>
+
             <View style={styles.bottomBar}>
-              <ActionBar onCancel={() => router.back()} />
+              <TouchableOpacity
+                style={styles.button}
+                onPress={() => router.back()}
+              >
+                <Text style={styles.buttonText}>Cancel</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.captureButton, isCapturingRef.current && styles.captureButtonDisabled]}
+                onPress={handleManualCapture}
+                disabled={isCapturingRef.current || orientation.heading === null}
+              >
+                <View style={styles.captureButtonInner} />
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.button, styles.primaryButton, capture.images.length < 20 && { opacity: 0.5 }]}
+                onPress={capture.completeCapture}
+                disabled={capture.images.length < 20}
+              >
+                <Text style={styles.buttonText}>Done</Text>
+              </TouchableOpacity>
             </View>
           </>
-        );
-
-      case 'ceiling-prompt':
-        return (
-          <View style={styles.promptOverlay}>
-            <Text style={styles.promptTitle}>Capture ceiling?</Text>
-            <Text style={styles.promptSubtitle}>Tilt up to capture overhead view (optional)</Text>
-            <View style={styles.promptButtons}>
-              <TouchableOpacity style={styles.promptButton} onPress={capture.startCeiling}>
-                <Text style={styles.promptButtonText}>Yes</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.promptButton, styles.promptButtonSecondary]}
-                onPress={capture.skipCeiling}
-              >
-                <Text style={styles.promptButtonText}>Skip</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        );
-
-      case 'floor-prompt':
-        return (
-          <View style={styles.promptOverlay}>
-            <Text style={styles.promptTitle}>Capture floor?</Text>
-            <Text style={styles.promptSubtitle}>Tilt down to capture ground view (optional)</Text>
-            <View style={styles.promptButtons}>
-              <TouchableOpacity style={styles.promptButton} onPress={capture.startFloor}>
-                <Text style={styles.promptButtonText}>Yes</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.promptButton, styles.promptButtonSecondary]}
-                onPress={capture.skipFloor}
-              >
-                <Text style={styles.promptButtonText}>Skip</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
         );
 
       case 'completion':
         return (
           <View style={styles.completionOverlay}>
             <Text style={styles.completionTitle}>Photosphere Complete!</Text>
-            <Text style={styles.completionSubtitle}>Saving...</Text>
+            <Text style={styles.completionSubtitle}>Saving {capture.imageCount} images...</Text>
           </View>
         );
 
@@ -277,6 +243,10 @@ const styles = StyleSheet.create({
     bottom: 40,
     left: 0,
     right: 0,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+    paddingHorizontal: 20,
     zIndex: 10,
   },
   instructionTitle: {
@@ -289,43 +259,43 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: 'rgba(255, 255, 255, 0.7)',
   },
-  promptOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.8)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 20,
+  orientationInfo: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.5)',
+    marginTop: 8,
   },
-  promptTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#FFFFFF',
-    marginBottom: 12,
-  },
-  promptSubtitle: {
-    fontSize: 16,
-    color: 'rgba(255, 255, 255, 0.8)',
-    marginBottom: 32,
-    textAlign: 'center',
-    paddingHorizontal: 40,
-  },
-  promptButtons: {
-    flexDirection: 'row',
-    gap: 16,
-  },
-  promptButton: {
-    paddingVertical: 14,
-    paddingHorizontal: 32,
-    backgroundColor: '#4285F4',
+  button: {
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
     borderRadius: 8,
   },
-  promptButtonSecondary: {
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+  primaryButton: {
+    backgroundColor: '#4285F4',
   },
-  promptButtonText: {
+  buttonText: {
     fontSize: 16,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+  captureButton: {
+    width: 70,
+    height: 70,
+    borderRadius: 35,
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    borderWidth: 4,
+    borderColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  captureButtonDisabled: {
+    opacity: 0.5,
+  },
+  captureButtonInner: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: '#FFFFFF',
   },
   completionOverlay: {
     ...StyleSheet.absoluteFillObject,
