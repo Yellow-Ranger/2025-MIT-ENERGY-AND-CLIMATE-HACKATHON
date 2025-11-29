@@ -81,15 +81,18 @@ export function useSmoothOrientation() {
             lastRateCheckRef.current = now;
 
             // Update with rate info
-            if (data.rotation) {
-              const rawHeading = normalizeHeading(toDegrees(data.rotation.alpha));
-              const rawBeta = toDegrees(data.rotation.beta);
-              const photospherePitch = rawBeta !== null ? rawBeta - 90 : null;
-              const rawRoll = toDegrees(data.rotation.gamma);
+          if (data.rotation) {
+            const rawHeading = normalizeHeading(toDegrees(data.rotation.alpha));
+            const rawBeta = toDegrees(data.rotation.beta);
+            // Map device beta to photosphere pitch:
+            // beta ~90 when device is vertical, <90 when tilted upward, >90 when tilted downward
+            // We want pitch +90 (ceiling) -> 0 (horizon) -> -90 (floor)
+            const photospherePitch = rawBeta !== null ? 90 - rawBeta : null;
+            const rawRoll = toDegrees(data.rotation.gamma);
 
-              smoothHeadingRef.current = smoothAngle(smoothHeadingRef.current, rawHeading, HEADING_ALPHA);
-              smoothPitchRef.current = smooth(smoothPitchRef.current, photospherePitch, PITCH_ALPHA);
-              smoothRollRef.current = smooth(smoothRollRef.current, rawRoll, ROLL_ALPHA);
+            smoothHeadingRef.current = smoothAngle(smoothHeadingRef.current, rawHeading, HEADING_ALPHA);
+            smoothPitchRef.current = smooth(smoothPitchRef.current, photospherePitch, PITCH_ALPHA);
+            smoothRollRef.current = smooth(smoothRollRef.current, rawRoll, ROLL_ALPHA);
 
               setOrientation({
                 heading: smoothHeadingRef.current,
@@ -105,7 +108,7 @@ export function useSmoothOrientation() {
               // DeviceMotion beta: 0° (flat) -> 90° (upright portrait) -> 180° (flat upside down)
               // Photosphere pitch: -90° (floor) -> 0° (straight ahead) -> +90° (ceiling)
               const rawBeta = toDegrees(data.rotation.beta);
-              const photospherePitch = rawBeta !== null ? rawBeta - 90 : null;
+              const photospherePitch = rawBeta !== null ? 90 - rawBeta : null;
 
               const smoothedPitch = smooth(
                 smoothPitchRef.current,
