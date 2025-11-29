@@ -26,6 +26,7 @@ const styles = StyleSheet.create({
     height: '100%',
     alignItems: 'center',
     justifyContent: 'center',
+    zIndex: 6,
   },
   frame: {
     width: 280,

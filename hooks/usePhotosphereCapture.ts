@@ -39,6 +39,14 @@ export function usePhotosphereCapture() {
       position: 1,
     };
 
+    console.log('[usePhotosphereCapture] Adding image:', {
+      segment,
+      captureType,
+      targetHeading,
+      uri: photoUri,
+      hasFileScheme: photoUri.startsWith('file://'),
+    });
+
     setImages(prev => [...prev, newImage]);
 
     if (captureType === 'horizontal') {
