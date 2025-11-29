@@ -10,8 +10,8 @@ interface AlignmentState {
 
 const ALIGN_THRESHOLD = 12;        // degrees - trigger auto-capture
 const APPROACH_THRESHOLD = 40;     // degrees - start moving dot
-const STABILITY_DURATION = 300;    // ms - must hold alignment
-const CAPTURE_THROTTLE = 500;      // ms - minimum time between captures
+const STABILITY_DURATION = 500;    // ms - must hold alignment (smoother)
+const CAPTURE_THROTTLE = 1400;     // ms - minimum time between captures (spaced out)
 
 export function useAutoCapture(
   currentHeading: number | null,

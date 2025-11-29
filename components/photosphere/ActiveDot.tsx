@@ -60,6 +60,10 @@ export function ActiveDot({ position }: ActiveDotProps) {
 const styles = StyleSheet.create({
   dot: {
     position: 'absolute',
+    top: '50%',
+    left: '50%',
+    marginTop: -24,  // half of height to center the dot
+    marginLeft: -24, // half of width to center the dot
     width: 48,
     height: 48,
     borderRadius: 24,

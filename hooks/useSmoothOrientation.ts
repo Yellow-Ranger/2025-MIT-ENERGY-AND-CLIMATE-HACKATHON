@@ -23,6 +23,23 @@ function normalizeHeading(alpha: number | null): number | null {
   return normalized;
 }
 
+function smooth(prev: number | null, next: number | null, alpha: number): number | null {
+  if (next === null) return prev;
+  if (prev === null) return next;
+  return prev + alpha * (next - prev);
+}
+
+// Handle circular smoothing for heading to avoid wrap jitter near 0/360
+function smoothAngle(prev: number | null, next: number | null, alpha: number): number | null {
+  if (next === null) return prev;
+  if (prev === null) return next;
+  const diff = ((next - prev + 540) % 360) - 180; // -180..180
+  const blended = prev + alpha * diff;
+  let normalized = blended % 360;
+  if (normalized < 0) normalized += 360;
+  return normalized;
+}
+
 export function useSmoothOrientation() {
   const [orientation, setOrientation] = useState<SmoothOrientationData>({
     heading: null,
@@ -34,6 +51,14 @@ export function useSmoothOrientation() {
   const subscriptionRef = useRef<any>(null);
   const frameCountRef = useRef(0);
   const lastRateCheckRef = useRef(Date.now());
+  const smoothHeadingRef = useRef<number | null>(null);
+  const smoothPitchRef = useRef<number | null>(null);
+  const smoothRollRef = useRef<number | null>(null);
+
+  // Smoothing factors (lower = smoother but slower)
+  const HEADING_ALPHA = 0.08;
+  const PITCH_ALPHA = 0.12;
+  const ROLL_ALPHA = 0.12;
 
   useEffect(() => {
     let mounted = true;
@@ -41,7 +66,7 @@ export function useSmoothOrientation() {
     const startListening = async () => {
       try {
         // Set update interval to ~60 Hz (16.67ms)
-        DeviceMotion.setUpdateInterval(16);
+        DeviceMotion.setUpdateInterval(30); // ~33 Hz for smoother motion without noise
 
         subscriptionRef.current = DeviceMotion.addListener((data: DeviceMotionMeasurement) => {
           if (!mounted) return;
@@ -57,10 +82,18 @@ export function useSmoothOrientation() {
 
             // Update with rate info
             if (data.rotation) {
+              const rawHeading = normalizeHeading(toDegrees(data.rotation.alpha));
+              const rawPitch = toDegrees(data.rotation.beta);
+              const rawRoll = toDegrees(data.rotation.gamma);
+
+              smoothHeadingRef.current = smoothAngle(smoothHeadingRef.current, rawHeading, HEADING_ALPHA);
+              smoothPitchRef.current = smooth(smoothPitchRef.current, rawPitch, PITCH_ALPHA);
+              smoothRollRef.current = smooth(smoothRollRef.current, rawRoll, ROLL_ALPHA);
+
               setOrientation({
-                heading: normalizeHeading(toDegrees(data.rotation.alpha)),
-                pitch: toDegrees(data.rotation.beta),
-                roll: toDegrees(data.rotation.gamma),
+                heading: smoothHeadingRef.current,
+                pitch: smoothPitchRef.current,
+                roll: smoothRollRef.current,
                 updateRate: rate,
               });
             }
@@ -68,11 +101,34 @@ export function useSmoothOrientation() {
             // Normal update (no rate calculation)
             if (data.rotation) {
               setOrientation(prev => ({
-                heading: normalizeHeading(toDegrees(data.rotation.alpha)),
-                pitch: toDegrees(data.rotation.beta),
-                roll: toDegrees(data.rotation.gamma),
+                heading: smoothAngle(
+                  smoothHeadingRef.current,
+                  normalizeHeading(toDegrees(data.rotation.alpha)),
+                  HEADING_ALPHA
+                ),
+                pitch: smooth(
+                  smoothPitchRef.current,
+                  toDegrees(data.rotation.beta),
+                  PITCH_ALPHA
+                ),
+                roll: smooth(
+                  smoothRollRef.current,
+                  toDegrees(data.rotation.gamma),
+                  ROLL_ALPHA
+                ),
                 updateRate: prev.updateRate,
               }));
+
+              // Persist smoothed refs to keep continuity
+              const updated = {
+                heading: smoothHeadingRef.current,
+                pitch: smoothPitchRef.current,
+                roll: smoothRollRef.current,
+              };
+
+              smoothHeadingRef.current = updated.heading ?? smoothHeadingRef.current;
+              smoothPitchRef.current = updated.pitch ?? smoothPitchRef.current;
+              smoothRollRef.current = updated.roll ?? smoothRollRef.current;
             }
           }
         });

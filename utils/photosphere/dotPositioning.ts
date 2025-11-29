@@ -1,9 +1,11 @@
 import type { DotPosition } from '../../types/photosphere';
-import { smallestAngleDiff } from './orientationMath';
+import { smallestAngleDiff, calculateTargetHeading } from './orientationMath';
 
 const FRAME_RADIUS = 120;          // pixels - distance to edge of frame
 const ALIGN_THRESHOLD = 12;        // degrees - turn blue when aligned
 const APPROACH_THRESHOLD = 40;     // degrees - start moving when within this angle
+const MARKER_RADIUS = 160;         // pixels - distance from center for progression markers
+const ALIGN_THRESHOLD_CARDINAL = 10;
 
 /**
  * Calculate dot position for horizontal capture
@@ -40,6 +42,52 @@ export function calculateDotPosition(
   const opacity = 0.9 + (0.1 * scaleProgress);
 
   return { x, y, distance, scale, color, opacity };
+}
+
+/**
+ * Build four cardinal markers (top/bottom/left/right). Only one direction
+ * is emphasized based on which way the user needs to rotate toward the target.
+ */
+export function buildCardinalMarkers(
+  currentHeading: number,
+  targetHeading: number | null
+) {
+  // Signed angle diff (-180..180): positive means rotate right/clockwise
+  const rawDiff = targetHeading === null
+    ? 0
+    : (((targetHeading - currentHeading + 540) % 360) - 180);
+
+  const activeDirection = targetHeading === null
+    ? null
+    : rawDiff > 0 ? 'right' : 'left';
+
+  const closeness = targetHeading === null
+    ? 0
+    : Math.max(0, 1 - Math.abs(rawDiff) / 120); // grows as you align
+
+  const makeMarker = (key: 'top' | 'bottom' | 'left' | 'right') => {
+    const base = { x: 0, y: 0 };
+    if (key === 'top') base.y = -MARKER_RADIUS;
+    if (key === 'bottom') base.y = MARKER_RADIUS;
+    if (key === 'left') base.x = -MARKER_RADIUS;
+    if (key === 'right') base.x = MARKER_RADIUS;
+
+    const isActive = activeDirection === key;
+    const aligned = targetHeading !== null && Math.abs(rawDiff) < ALIGN_THRESHOLD_CARDINAL && isActive;
+
+    const scale = isActive ? 1 + closeness * 0.6 : 0.9;
+    const opacity = isActive ? 0.35 + closeness * 0.55 : 0.3;
+    const color = aligned ? 'blue' : 'white';
+
+    return { ...base, scale, opacity, color, key };
+  };
+
+  return [
+    makeMarker('top'),
+    makeMarker('bottom'),
+    makeMarker('left'),
+    makeMarker('right'),
+  ];
 }
 
 /**

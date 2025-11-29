@@ -15,6 +15,7 @@ import { CaptureFrame } from '../components/photosphere/CaptureFrame';
 import { PanoramaOverlay } from '../components/photosphere/PanoramaOverlay';
 import { ProgressIndicator } from '../components/photosphere/ProgressIndicator';
 import { ActionBar } from '../components/photosphere/ActionBar';
+import { CaptureMarkers } from '../components/photosphere/CaptureMarkers';
 
 // Utils
 import { calculateDotPosition } from '../utils/photosphere/dotPositioning';
@@ -116,6 +117,10 @@ export default function NativeScan() {
       ? calculateDotPosition(orientation.heading, targetHeading)
       : null;
 
+  const showMarkers =
+    capture.step === 'capturing-horizontal' &&
+    orientation.heading !== null;
+
   // Save and exit on completion
   useEffect(() => {
     if (capture.step === 'completion') {
@@ -154,6 +159,12 @@ export default function NativeScan() {
           <>
             <PanoramaOverlay images={capture.images} currentHeading={orientation.heading} />
             <CaptureFrame />
+            {showMarkers && (
+              <CaptureMarkers
+                currentHeading={orientation.heading}
+                targetHeading={targetHeading}
+              />
+            )}
             {dotPosition ? (
               <ActiveDot position={dotPosition} />
             ) : (
